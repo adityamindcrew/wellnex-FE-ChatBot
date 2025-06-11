@@ -9,6 +9,7 @@ const apiUrl = 'https://wellnexai.com/api';
 interface Message {
   text: string
   isUser: boolean
+  nextSteps?: string[]
 }
 
 interface ChatbotTheme {
@@ -31,15 +32,19 @@ interface FormField {
 
 interface ChatResponse {
   sessionId: string;
-  question: string;
-  isLastQuestion: boolean;
+  question?: string;
+  isLastQuestion?: boolean;
   isComplete?: boolean;
   recommendation?: string;
-  needsClarification?: boolean;
-  clarification?: string;
   message?: string;
+  clarification?: string;
+  messages?: Array<{
+    type: string;
+    content: string;
+    isLastQuestion?: boolean;
+  }>;
   suggestedServices?: string[];
-  askForSpecialist?: boolean;
+  nextSteps?: string[];
   currentQuestion?: string;
   needsForm?: boolean;
   formFields?: FormField[];
@@ -48,6 +53,7 @@ interface ChatResponse {
     isSetupIncomplete?: boolean;
     contactInfo?: string;
   }
+  sessionEnded: boolean;
 }
 
 interface FormData {
@@ -60,7 +66,6 @@ const Chatbot = () => {
   const [themeColor, setThemeColor] = useState('#007bff'); // Default color
   const [logo, setLogo] = useState('');
   const [name, setName] = useState('');
-  const [website_url, setWebsite_url] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [sessionId, setSessionId] = useState<string>('');
   const [isChatComplete, setIsChatComplete] = useState(false);
@@ -77,9 +82,7 @@ const Chatbot = () => {
   // Scroll to bottom when messages change
   useEffect(() => {
     scrollToBottom();
-  }, [messages, isLoading]);
-
-  console.log("themeColor", themeColor, window.location);
+  }, [isLoading]);
 
   useEffect(() => {
     const fetchThemeColor = async () => {
@@ -93,12 +96,19 @@ const Chatbot = () => {
             },
             body: JSON.stringify({ businessId: storedBusinessId }),
           });
-          console.log("response", response.ok);
 
-          if (response.ok) {
-            const data: ChatbotTheme = await response.json();
-            console.log("data", data);
+          const data = await response.json();
 
+          if (!data.status) {
+            setMessages([{
+              text: "Sorry, this chatbot is currently unavailable. Please contact the business administrator for assistance.",
+              isUser: false
+            }]);
+            setIsChatComplete(true);
+            return;
+          }
+
+          if (data.data) {
             if (data.data.themeColor) {
               setThemeColor(data.data.themeColor);
             }
@@ -116,7 +126,6 @@ const Chatbot = () => {
         console.error('Error fetching theme color:', error);
       }
     };
-    console.log("fetchThemeColor");
     fetchThemeColor();
   }, []);
 
@@ -129,33 +138,43 @@ const Chatbot = () => {
           if (storedBusinessId) {
             const response = await fetch(`${apiUrl}/chatbot/start-chat`, {
               method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
+              headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ businessId: storedBusinessId }),
             });
 
             if (response.ok) {
               const data: ChatResponse = await response.json();
-              console.log("data", data);
+              console.log(data);
 
               if (data?.data?.isSetupIncomplete) {
                 setMessages([{
-                  text: `${data.message}\n\nContact: ${data.data.contactInfo}`,
+                  text: `${data.messages}\n\nContact: ${data.data.contactInfo}`,
                   isUser: false
                 }]);
                 setIsChatComplete(true);
                 return;
               }
+
               setSessionId(data.sessionId);
-              // Add the initial bot question to the chat
-              if (data.greeting) {
-                setMessages([{ text: data.greeting, isUser: false }]);
-                if (data.question) {
-                  setMessages(prev => [...prev, { text: data.question, isUser: false }]);
-                }
-              } else if (data.question) {
-                setMessages([{ text: data.question, isUser: false }]);
+
+              if (data.messages && Array.isArray(data.messages)) {
+                const formattedMessages = data.messages.map(msg => ({
+                  text: msg.content,
+                  isUser: false
+                }));
+                setMessages(formattedMessages);
+              } else if (data.greeting || data.question) {
+                const newMsgs: Message[] = [];
+                if (data.greeting) newMsgs.push({ text: data.greeting, isUser: false });
+                if (data.question) newMsgs.push({ text: data.question, isUser: false });
+                setMessages(newMsgs);
+              }
+              if (data.isComplete && data.recommendation) {
+                setIsChatComplete(true);
+              }
+              if (data.formFields) {
+                setFormFields(data.formFields);
+                setIsChatComplete(true);
               }
             }
           }
@@ -164,61 +183,47 @@ const Chatbot = () => {
         }
       }
     };
-
     startChat();
   }, [isOpen]);
 
   const handleSendMessage = async () => {
     if (inputValue.trim() && !isChatComplete) {
-      setMessages(prev => [...prev, { text: inputValue, isUser: true }]);
+      const userMsg = { text: inputValue, isUser: true };
+      setMessages(prev => [...prev, userMsg]);
       setIsLoading(true);
 
       try {
         const response = await fetch(`${apiUrl}/chatbot/submit-answer`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            sessionId: sessionId,
-            answer: inputValue
-          }),
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionId, answer: inputValue }),
         });
 
         if (response.ok) {
           const data: ChatResponse = await response.json();
-          console.log("data", data);
 
+          // Process updated "message" array
+          if (data.messages && Array.isArray(data.messages)) {
+            const botMessages = data.messages.map(msg => ({
+              text: msg.content,
+              isUser: false
+            }));
+            setMessages(prev => [...prev, ...botMessages]);
+          }
+          if (data.nextSteps && data.nextSteps.length > 0) {
+            setMessages(prev => [...prev, {
+              text: "Please select an option:",
+              isUser: false,
+              nextSteps: data.nextSteps
+            }]);
+          }
           if (data.isComplete && data.recommendation) {
-            setMessages(prev => [...prev, { text: data.recommendation || '', isUser: false }]);
             setIsChatComplete(true);
-          } else if (data.message) {
-            setMessages(prev => [...prev, { text: data.message ?? '', isUser: false }]);
+          }
 
-            if (data.suggestedServices && data.suggestedServices.length > 0) {
-              const servicesMessage = "Here are some services you might be interested in:\n" +
-                data.suggestedServices.map(service => `• ${service}`).join('\n');
-              setMessages(prev => [...prev, { text: servicesMessage, isUser: false }]);
-            }
-
-            if (data.askForSpecialist) {
-              setMessages(prev => [...prev, {
-                text: "Would you like to connect with a specialist to discuss this further?",
-                isUser: false
-              }]);
-            }
-
-            if (data.needsForm && data.formFields) {
-              setFormFields(data.formFields);
-              setIsChatComplete(true);
-            }
-          } else if (data.question && data.needsClarification) {
-            setMessages(prev => [...prev, { text: data.clarification || '', isUser: false }]);
-          } else if (data.question) {
-            if (data.greeting) {
-              setMessages(prev => [...prev, { text: data.greeting ?? '', isUser: false }]);
-            }
-            setMessages(prev => [...prev, { text: data.question || '', isUser: false }]);
+          if (data.formFields) {
+            setFormFields(data.formFields);
+            setIsChatComplete(true);
           }
         }
       } catch (error) {
@@ -228,8 +233,7 @@ const Chatbot = () => {
         setInputValue("");
       }
     }
-  }
-
+  };
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault()
@@ -240,6 +244,7 @@ const Chatbot = () => {
   const handleFormSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     try {
+      setIsLoading(true)
       const response = await fetch(`${apiUrl}/chatbot/store-lead`, {
         method: 'POST',
         headers: {
@@ -253,12 +258,12 @@ const Chatbot = () => {
 
       const data = await response.json();
       if (data.status) {
-        // Show success message
-        setMessages([{
+        setMessages(prev => [...prev, {
           text: "Thank you! A specialist will contact you shortly.",
           isUser: false
         }]);
-        setIsChatComplete(false);
+        setFormFields([]);
+        setFormData({});
       }
     } catch (error) {
       console.error('Error:', error);
@@ -266,6 +271,8 @@ const Chatbot = () => {
         text: "Sorry, there was an error submitting your information. Please try again.",
         isUser: false
       }]);
+    } finally {
+      setIsLoading(false)
     }
   };
 
@@ -275,6 +282,77 @@ const Chatbot = () => {
       ...prev,
       [name]: type === 'checkbox' ? checked : value
     }));
+  };
+
+  const handleNextStep = async (step: string) => {
+    setMessages(prev => [...prev, { text: step, isUser: true }]);
+    setIsLoading(true);
+    try {
+      const response = await fetch(`${apiUrl}/chatbot/handle-consultation-choice`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          sessionId: sessionId,
+          choice: step
+        }),
+      });
+
+      if (response.ok) {
+        const data: ChatResponse = await response.json();
+
+        // Handle form response
+        if (data.needsForm) {
+          const messageText = data.message;
+          if (messageText) {
+            setMessages(prev => [...prev, {
+              text: messageText,
+              isUser: false
+            }]);
+          }
+          if (data.formFields) {
+            setFormFields(data.formFields);
+            setIsChatComplete(true);
+          }
+          return;
+        }
+
+        if (data.messages && Array.isArray(data.messages)) {
+          const botMessages = data.messages.map(msg => ({
+            text: msg.content,
+            isUser: false
+          }));
+          setMessages(prev => [...prev, ...botMessages]);
+        }
+
+        if (data.nextSteps && data.nextSteps.length > 0) {
+          setMessages(prev => [...prev, {
+            text: "Please select an option:",
+            isUser: false,
+            nextSteps: data.nextSteps
+          }]);
+        }
+
+        if (data.isComplete) {
+          setIsChatComplete(true);
+        }
+        if (data.sessionEnded) {
+          setMessages(prev => [...prev, {
+            text: data.message ?? 'Thank you',
+            isUser: false
+          }])
+        }
+      }
+    } catch (error) {
+      console.error('Error handling consultation choice:', error);
+      setMessages(prev => [...prev, {
+        text: "Sorry, there was an error processing your choice. Please try again.",
+        isUser: false
+      }]);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -378,7 +456,7 @@ const Chatbot = () => {
               </header>
 
               {/* Chat Area or Form */}
-              {isChatComplete ? (
+              {isChatComplete && formFields.length > 0 ? (
                 <div className="form-container" style={{ padding: '20px', overflowY: 'auto' }}>
                   <form onSubmit={handleFormSubmit}>
                     {formFields.map((field) => (
@@ -444,11 +522,33 @@ const Chatbot = () => {
                         position: 'relative',
                         [message.isUser ? 'right' : 'left']: '13px'
                       }}>
-                        <p style={{ margin: 0, }}>{message.text}</p>
+                        <p style={{ margin: 0 }}>{message.text}</p>
+                        {message.nextSteps && (
+                          <div style={{
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '8px',
+                            marginTop: '12px'
+                          }}>
+                            {message.nextSteps.map((step, index) => (
+                              <button
+                                key={index}
+                                onClick={() => handleNextStep(step)}
+                                className="next-step-button"
+                                style={{
+                                  color: themeColor,
+                                  border: `1px solid ${themeColor}`,
+                                }}
+                              >
+                                {step}
+                              </button>
+                            ))}
+                          </div>
+                        )}
                         <div className={`message-triangle ${message.isUser ? "user-triangle" : "bot-triangle"}`}
                           style={{
                             position: 'absolute',
-                            bottom: '-15px',
+                            bottom: '-10px',
                             [message.isUser ? 'right' : 'left']: '0',
                             width: '0',
                             height: '0',
@@ -518,7 +618,7 @@ const Chatbot = () => {
               )}
 
               {/* Input Area - Only show if chat is not complete */}
-              {!isChatComplete && (
+              {!isChatComplete && !messages.find(f => f.nextSteps) && (
                 <div className="input-area">
                   <div className="input-container">
                     <input
@@ -589,6 +689,21 @@ const Chatbot = () => {
           @keyframes bounce {
             0%, 80%, 100% { transform: scale(0); }
             40% { transform: scale(1); }
+          }
+
+          .next-step-button {
+            padding: 8px 16px;
+            background: #fff;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.2s ease;
+          }
+
+          .next-step-button:hover {
+            background: var(--theme-color);
+            color: #fff;
           }
         `}
       </style>
