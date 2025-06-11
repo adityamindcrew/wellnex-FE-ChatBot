@@ -432,7 +432,15 @@ const Chatbot = () => {
                     <img src={logo ? "https://wellnexai.com/uploads/business-logos/" + logo : '/chatbot.logo.png'} alt="logo" width={40} />
                   </div>
                   <div>
-                    <h1 className="title">{name ? name : "Wellnex AI"}</h1>
+                    <h1 className="title" style={{
+                      margin: 0,
+                      fontSize: '16px',
+                      fontWeight: 600,
+                      color: '#fff',
+                      wordWrap: 'break-word',
+                      whiteSpace: 'normal',
+                      maxWidth: '200px'
+                    }}>{name ? name : "Wellnex AI"}</h1>
                     <div className="status">
                       <div className="status-dot"></div>
                       <span className="status-text">Online</span>

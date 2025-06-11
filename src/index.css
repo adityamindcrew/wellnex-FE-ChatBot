@@ -116,6 +116,7 @@
 .status-text {
   color: #43ee7d;
   font-size: 14px;
+  margin-top: 2px;
 }
 
 .minimize-button {
