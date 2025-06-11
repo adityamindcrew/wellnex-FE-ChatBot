@@ -73,6 +73,7 @@ const Chatbot = () => {
   const [showWelcomePopup, setShowWelcomePopup] = useState(false);
   const [formFields, setFormFields] = useState<FormField[]>([]);
   const [formData, setFormData] = useState<FormData>({});
+  const [formError, setFormError] = useState("")
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -188,15 +189,17 @@ const Chatbot = () => {
 
   const handleSendMessage = async () => {
     if (inputValue.trim() && !isChatComplete) {
+      const answerValue = inputValue
       const userMsg = { text: inputValue, isUser: true };
       setMessages(prev => [...prev, userMsg]);
       setIsLoading(true);
 
       try {
+        setInputValue("");
         const response = await fetch(`${apiUrl}/chatbot/submit-answer`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sessionId, answer: inputValue }),
+          body: JSON.stringify({ sessionId, answer: answerValue }),
         });
 
         if (response.ok) {
@@ -230,7 +233,6 @@ const Chatbot = () => {
         console.error('Error sending message:', error);
       } finally {
         setIsLoading(false);
-        setInputValue("");
       }
     }
   };
@@ -265,12 +267,12 @@ const Chatbot = () => {
         setFormFields([]);
         setFormData({});
       }
+      console.log(data, response);
+      setFormError(data.error && data.error.includes("Lead validation failed") ? 'Please fill valid details.' : "Something went wrong.")
+
     } catch (error) {
       console.error('Error:', error);
-      setMessages(prev => [...prev, {
-        text: "Sorry, there was an error submitting your information. Please try again.",
-        isUser: false
-      }]);
+      setFormError("Something went wrong.")
     } finally {
       setIsLoading(false)
     }
@@ -519,6 +521,7 @@ const Chatbot = () => {
                       Submit
                     </button>
                   </form>
+                  <div style={{ color: "red", textAlign: "center", paddingTop: "5px" }}>{formError}</div>
                 </div>
               ) : (
                 <div className="chat-messages" style={{ flex: 1, overflowY: 'auto' }}>
@@ -602,7 +605,7 @@ const Chatbot = () => {
                         <div className={`message-triangle bot-triangle`}
                           style={{
                             position: 'absolute',
-                            bottom: '-15px',
+                            bottom: '-10px',
                             'left': '0',
                             width: '0',
                             height: '0',
@@ -643,18 +646,7 @@ const Chatbot = () => {
                       className="send-button"
                       disabled={isLoading}
                     >
-                      {isLoading ? (
-                        <div className="button-loader" style={{
-                          width: '20px',
-                          height: '20px',
-                          border: '2px solid #fff',
-                          borderTop: '2px solid transparent',
-                          borderRadius: '50%',
-                          animation: 'spin 1s linear infinite',
-                        }} />
-                      ) : (
-                        <img src={sendIcon} alt="send" width={20} />
-                      )}
+                      <img src={sendIcon} alt="send" width={20} />
                     </button>
                   </div>
                 </div>
@@ -707,11 +699,6 @@ const Chatbot = () => {
             font-size: 14px;
             font-weight: 500;
             transition: all 0.2s ease;
-          }
-
-          .next-step-button:hover {
-            background: var(--theme-color);
-            color: #fff;
           }
         `}
       </style>
